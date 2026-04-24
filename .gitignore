@@ -1,13 +1,14 @@
 # Результаты работы скрипта
 *.csv
+ip_whois_results.csv
+subnet_owners.csv
+
+# История команд и временные файлы
+.ash_history
+.bash_history
 *.log
 *.tmp
-
-# Временные файлы
 /tmp/
-*.swp
-*.swo
-*~
 
 # Системные файлы
 .DS_Store
