@@ -10,6 +10,10 @@ subnet_owners.csv
 *.tmp
 /tmp/
 
+# Старые графы (canvas/html)
+*.canvas
+*.html
+
 # Системные файлы
 .DS_Store
 Thumbs.db
