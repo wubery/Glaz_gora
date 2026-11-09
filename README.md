@@ -32,16 +32,39 @@ apk add curl grep iputils ping whois gawk sed
 curl -O https://raw.githubusercontent.com/wubery/Glaz_gora/main/auto_scan.sh
 chmod +x auto_scan.sh
 
-# 2. Запуск со ссылкой на подписку:
+# 2. Запуск со ссылкой по умолчанию:
+./auto_scan.sh --default
+# или сокращённо:
+./auto_scan.sh -d
+
+# 3. Запуск со своей ссылкой на подписку:
 ./auto_scan.sh "https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt"
 # или с флагом:
 ./auto_scan.sh --url "https://..."
 
-# 3. Запуск со скачанным файлом ключей:
+# 4. Запуск со скачанным файлом ключей:
 ./auto_scan.sh keys.txt
 # или с флагом:
 ./auto_scan.sh --file /path/to/downloaded_keys.txt
 ```
+
+## ⚙️ Настройка ссылки по умолчанию
+
+По умолчанию скрипт тянет ключи из:
+`https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt`
+
+Вы можете легко изменить её тремя способами:
+1. **Через файл конфигурации `auto_scan.conf`** (рекомендуется, скрыт в `.gitignore` для безопасности):
+   ```bash
+   cp auto_scan.conf.example auto_scan.conf
+   # отредактируйте DEFAULT_SUBSCRIPTION_URL в auto_scan.conf
+   ```
+2. **Через переменную окружения**:
+   ```bash
+   export VLESS_DEFAULT_URL="https://ваша-ссылка..."
+   ./auto_scan.sh -d
+   ```
+3. **Прямо в начале скрипта `auto_scan.sh`** в переменной `DEFAULT_SUBSCRIPTION_URL`.
 
 ## 🔄 Интерактивный режим
 
@@ -51,9 +74,10 @@ chmod +x auto_scan.sh
 ```
 
 При выборе пункта `1) Сканировать VLESS` скрипт предложит:
-1. Ввести ссылку на подписку (URL)
-2. Указать путь к скачанному файлу (или выбрать обнаруженный файл в текущей папке)
-3. Либо сразу вставить ссылку или путь к файлу.
+1. Использовать ссылку по умолчанию (достаточно просто нажать **Enter**);
+2. Указать путь к скачанному файлу (или выбрать обнаруженный файл в текущей папке);
+3. Ввести любую другую прямую ссылку на подписку;
+4. Либо сразу вставить ссылку или путь к файлу.
 
 ## 📊 Результат
 

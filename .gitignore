@@ -14,6 +14,10 @@ subnet_owners.csv
 *.canvas
 *.html
 
+# Конфигурация с приватными ключами
+auto_scan.conf
+.env
+
 # Системные файлы
 .DS_Store
 Thumbs.db

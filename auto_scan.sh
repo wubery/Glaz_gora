@@ -12,6 +12,20 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# ══════════════════════════════════════════════════════
+# КОНФИГУРАЦИЯ ПО УМОЛЧАНИЮ
+# ══════════════════════════════════════════════════════
+# Ссылка на подписку по умолчанию
+DEFAULT_SUBSCRIPTION_URL="https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt"
+
+# Подгрузка локального файла конфигурации auto_scan.conf (если существует)
+SCRIPT_DIR=$(dirname "$0" 2>/dev/null || echo ".")
+[ -f "$SCRIPT_DIR/auto_scan.conf" ] && . "$SCRIPT_DIR/auto_scan.conf"
+[ -f "./auto_scan.conf" ] && . "./auto_scan.conf"
+
+# Итоговая ссылка по умолчанию (можно переопределить через переменную VLESS_DEFAULT_URL)
+DEFAULT_URL="${VLESS_DEFAULT_URL:-$DEFAULT_SUBSCRIPTION_URL}"
+
 # Проверка зависимостей
 check_deps() {
   for cmd in curl grep ping whois awk sort cut; do
@@ -27,15 +41,16 @@ do_vless_scan() {
 
   if [ -z "$TARGET" ]; then
     echo "📥 Выберите источник VLESS-ключей:"
-    echo "   1) 🌐 Ссылка на подписку (URL)"
+    echo "   1) 🌐 Ссылка по умолчанию ($DEFAULT_URL)"
     echo "   2) 📁 Скачанный файл с ключами (локальный файл)"
-    printf "   👉 Выберите вариант [1-2] (или вставьте ссылку / путь к файлу): "
+    echo "   3) 🔗 Ввести другую ссылку на подписку (URL)"
+    printf "   👉 Выберите вариант [1-3] (Enter — по умолчанию): "
     read -r USER_INPUT
 
     case "$USER_INPUT" in
-      1)
-        printf "🌐 Введите прямую ссылку на подписку: "
-        read -r TARGET
+      ""|1)
+        TARGET="$DEFAULT_URL"
+        echo "   ℹ️ Используется ссылка по умолчанию"
         ;;
       2)
         FOUND_FILES=""
@@ -48,6 +63,10 @@ do_vless_scan() {
           echo "   📄 Файлы в текущей папке:$FOUND_FILES"
         fi
         printf "📁 Введите имя или путь к файлу: "
+        read -r TARGET
+        ;;
+      3)
+        printf "🌐 Введите прямую ссылку на подписку: "
         read -r TARGET
         ;;
       *)
@@ -807,17 +826,21 @@ show_usage() {
   echo "Использование:"
   echo "  $0                          — интерактивное меню"
   echo "  $0 <ссылка_или_файл>         — проверка по ссылке или файлу"
-  echo "  $0 --url <ссылка>           — проверка по ссылке на подписку (-u)"
+  echo "  $0 --default                — проверка по ссылке по умолчанию (-d)"
+  echo "  $0 --url [ссылка]           — проверка по ссылке (без аргумента — по умолчанию) (-u)"
   echo "  $0 --file <путь_к_файлу>    — проверка из скачанного файла с ключами (-f)"
   echo "  $0 --asn <номер>            — подсети по ASN (-a)"
   echo "  $0 --ip <адрес>             — определить ASN по IP (-i)"
   echo "  $0 --ping <файл>            — пинг подсетей из файла (-p)"
   echo "  $0 --help                   — показать справку (-h)"
   echo ""
+  echo "Ссылка по умолчанию:"
+  echo "  $DEFAULT_URL"
+  echo ""
   echo "Примеры:"
-  echo "  $0 \"https://raw.githubusercontent.com/.../vless.txt\""
+  echo "  $0 --default"
   echo "  $0 keys.txt"
-  echo "  $0 --file /path/to/downloaded_subscription.txt"
+  echo "  $0 \"https://raw.githubusercontent.com/.../vless.txt\""
 }
 
 # ══════════════════════════════════════════════════════
@@ -828,7 +851,14 @@ check_deps
 # Если передан аргумент — режим без меню
 if [ -n "$1" ]; then
   case "$1" in
-    --url|-u)        do_vless_scan "$2" ;;
+    --default|-d)    do_vless_scan "$DEFAULT_URL" ;;
+    --url|-u)
+      if [ -n "$2" ]; then
+        do_vless_scan "$2"
+      else
+        do_vless_scan "$DEFAULT_URL"
+      fi
+      ;;
     --file|-f)       do_vless_scan "$2" ;;
     --asn|-a)        do_asn_lookup "$2" ;;
     --ip|-i)         do_ip_to_asn "$2" ;;

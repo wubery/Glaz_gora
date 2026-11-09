@@ -1,0 +1,6 @@
+# auto_scan.conf — Конфигурация для auto_scan.sh
+# Скопируйте этот файл как auto_scan.conf:
+# cp auto_scan.conf.example auto_scan.conf
+
+# Ссылка на подписку по умолчанию:
+DEFAULT_SUBSCRIPTION_URL="https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt"
