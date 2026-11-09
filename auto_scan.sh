@@ -20,37 +20,115 @@ check_deps() {
 }
 
 # ══════════════════════════════════════════════════════
-# ФУНКЦИЯ 1: Проверка доступности по ссылке (vless_scan)
+# ФУНКЦИЯ 1: Проверка доступности (VLESS: подписка или файл)
 # ══════════════════════════════════════════════════════
-do_url_scan() {
-  URL="$1"
-  if [ -z "$URL" ]; then
-    printf "🌐 Введите прямую ссылку на файл с ключами: "
-    read -r URL
+do_vless_scan() {
+  TARGET="$1"
+
+  if [ -z "$TARGET" ]; then
+    echo "📥 Выберите источник VLESS-ключей:"
+    echo "   1) 🌐 Ссылка на подписку (URL)"
+    echo "   2) 📁 Скачанный файл с ключами (локальный файл)"
+    printf "   👉 Выберите вариант [1-2] (или вставьте ссылку / путь к файлу): "
+    read -r USER_INPUT
+
+    case "$USER_INPUT" in
+      1)
+        printf "🌐 Введите прямую ссылку на подписку: "
+        read -r TARGET
+        ;;
+      2)
+        FOUND_FILES=""
+        for f in *.txt *.conf *.json; do
+          if [ -f "$f" ] && [ "$f" != "ip_whois_results.csv" ] && [ "$f" != "subnet_owners.csv" ]; then
+            FOUND_FILES="$FOUND_FILES $f"
+          fi
+        done
+        if [ -n "$FOUND_FILES" ]; then
+          echo "   📄 Файлы в текущей папке:$FOUND_FILES"
+        fi
+        printf "📁 Введите имя или путь к файлу: "
+        read -r TARGET
+        ;;
+      *)
+        TARGET="$USER_INPUT"
+        ;;
+    esac
   fi
-  [ -z "$URL" ] && { echo "❌ Ссылка не указана."; return 1; }
+
+  [ -z "$TARGET" ] && { echo "❌ Источник не указан."; return 1; }
+
+  # Удаляем кавычки вокруг пути (если путь был скопирован в кавычках)
+  TARGET=$(echo "$TARGET" | sed "s/^['\"]//; s/['\"]$//")
 
   TMP_DIR=$(mktemp -d)
   trap "rm -rf $TMP_DIR" EXIT
   OUT_CSV="ip_whois_results.csv"
 
-  # ШАГ 1: Загрузка
-  echo ""
-  echo "🔐 ШАГ 1: Включите VPN для загрузки ключей"
-  echo "══════════════════════════════════════════════════════"
-  printf "   ✅ VPN включён? Нажмите Enter... "
-  read -r _dummy
+  # Определяем тип: URL или локальный файл
+  IS_URL=0
+  case "$TARGET" in
+    http://*|https://*|ftp://*)
+      IS_URL=1
+      ;;
+  esac
 
-  echo "📥 Загружаю: $URL"
-  if ! curl -sL --max-time 15 --fail "$URL" -o "$TMP_DIR/keys.txt" 2>/dev/null; then
-    echo "❌ Ошибка загрузки. Проверьте ссылку и подключение."; return 1
+  if [ "$IS_URL" -eq 1 ]; then
+    # ШАГ 1 для URL: Загрузка через VPN
+    echo ""
+    echo "🔐 ШАГ 1: Включите VPN для загрузки ключей"
+    echo "══════════════════════════════════════════════════════"
+    printf "   ✅ VPN включён? Нажмите Enter... "
+    read -r _dummy
+
+    echo "📥 Загружаю: $TARGET"
+    if ! curl -sL --max-time 15 --fail "$TARGET" -o "$TMP_DIR/raw_keys.txt" 2>/dev/null; then
+      echo "❌ Ошибка загрузки. Проверьте ссылку и подключение."
+      return 1
+    fi
+  else
+    # ШАГ 1 для локального файла: Чтение без необходимости VPN
+    if [ ! -f "$TARGET" ]; then
+      echo "❌ Файл не найден: $TARGET"
+      return 1
+    fi
+
+    echo ""
+    echo "📂 ШАГ 1: Чтение ключей из скачанного файла"
+    echo "══════════════════════════════════════════════════════"
+    echo "   📄 Файл: $TARGET"
+    cp "$TARGET" "$TMP_DIR/raw_keys.txt"
   fi
 
-  # Извлечение уникальных IP
+  # Очистка CRLF (переносы строк Windows)
+  tr -d '\r' < "$TMP_DIR/raw_keys.txt" > "$TMP_DIR/keys.txt"
+
+  # Проверка на Base64 (стандарт для подписок и файлов V2Ray / Xray / Marzban / Sing-box)
+  HAS_KEYS=$(grep -cE '@[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TMP_DIR/keys.txt" || true)
+  if [ "$HAS_KEYS" -eq 0 ]; then
+    if command -v base64 >/dev/null 2>&1; then
+      tr -- '-_' '+/' < "$TMP_DIR/keys.txt" | tr -d ' \n\t' | base64 -d > "$TMP_DIR/decoded.txt" 2>/dev/null || true
+      if grep -qE '@[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TMP_DIR/decoded.txt" 2>/dev/null; then
+        echo "   🔓 Обнаружена и успешно декодирована подписка в формате Base64"
+        mv "$TMP_DIR/decoded.txt" "$TMP_DIR/keys.txt"
+      else
+        rm -f "$TMP_DIR/decoded.txt"
+      fi
+    fi
+  fi
+
+  # Извлечение уникальных IP из ссылок (@IP:PORT)
   grep -oE '@[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TMP_DIR/keys.txt" | cut -d'@' -f2 | sort -u > "$TMP_DIR/all_ips.txt"
   TOTAL=$(wc -l < "$TMP_DIR/all_ips.txt" | tr -d ' ')
+
+  # Если ключи с @IP не найдены, проверяем строки с чистыми IP адресами
+  if [ "$TOTAL" -eq 0 ]; then
+    grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TMP_DIR/keys.txt" | sort -u > "$TMP_DIR/all_ips.txt"
+    TOTAL=$(wc -l < "$TMP_DIR/all_ips.txt" | tr -d ' ')
+  fi
+
   echo "   📦 Найдено уникальных IP: $TOTAL"
-  [ "$TOTAL" -eq 0 ] && { echo "❌ IP не найдены в подписке."; return 1; }
+  [ "$TOTAL" -eq 0 ] && { echo "❌ IP не найдены в источнике (подписке или файле)."; return 1; }
 
   # ШАГ 2: Пинг
   echo ""
@@ -144,6 +222,11 @@ do_url_scan() {
   tail -n +2 "$OUT_CSV" | cut -d';' -f2 | sort | uniq -c | sort -rn | head -10 | while read -r cnt name; do
     printf "   • %3d IP — %s\n" "$cnt" "$name"
   done
+}
+
+# Обратная совместимость для вызова по старому имени
+do_url_scan() {
+  do_vless_scan "$@"
 }
 
 # ══════════════════════════════════════════════════════
@@ -564,7 +647,7 @@ tags: [glaz-gora, url-scan, network]
 date: $TIMESTAMP
 ---
 
-# 🌐 Отчёт сканирования по ссылке
+# 🌐 Отчёт сканирования VLESS-ключей
 
 > Источник: \`$CSV_FILE\`
 > Дата: $TIMESTAMP
@@ -670,7 +753,7 @@ do_export_obsidian() {
   echo "📝 Экспорт отчёта в Obsidian MD"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
-  echo "   1) 📊 Экспорт URL-скана (ip_whois_results.csv)"
+  echo "   1) 📊 Экспорт VLESS-скана (ip_whois_results.csv)"
   echo "   2) 📶 Экспорт пинга подсетей (выбрать файл)"
   echo ""
   printf "   👉 Выберите [1-2]: "
@@ -709,7 +792,7 @@ show_menu() {
   echo "║          🛰️  GLAZ GORA — Сетевой Сканер  🛰️         ║"
   echo "╠══════════════════════════════════════════════════════╣"
   echo "║                                                      ║"
-  echo "║   1) 🌐 Проверить доступность по ссылке (VLESS)      ║"
+  echo "║   1) 🌐 Сканировать VLESS (подписка или файл)        ║"
   echo "║   2) 🔍 Найти подсети оператора по ASN               ║"
   echo "║   3) 📡 Определить ASN по IP (авто-детект)           ║"
   echo "║   4) 📶 Пинг подсетей из файла                      ║"
@@ -720,27 +803,47 @@ show_menu() {
   echo ""
 }
 
+show_usage() {
+  echo "Использование:"
+  echo "  $0                          — интерактивное меню"
+  echo "  $0 <ссылка_или_файл>         — проверка по ссылке или файлу"
+  echo "  $0 --url <ссылка>           — проверка по ссылке на подписку (-u)"
+  echo "  $0 --file <путь_к_файлу>    — проверка из скачанного файла с ключами (-f)"
+  echo "  $0 --asn <номер>            — подсети по ASN (-a)"
+  echo "  $0 --ip <адрес>             — определить ASN по IP (-i)"
+  echo "  $0 --ping <файл>            — пинг подсетей из файла (-p)"
+  echo "  $0 --help                   — показать справку (-h)"
+  echo ""
+  echo "Примеры:"
+  echo "  $0 \"https://raw.githubusercontent.com/.../vless.txt\""
+  echo "  $0 keys.txt"
+  echo "  $0 --file /path/to/downloaded_subscription.txt"
+}
+
 # ══════════════════════════════════════════════════════
 # ОСНОВНОЙ ЦИКЛ
 # ══════════════════════════════════════════════════════
 check_deps
 
-# Если передан аргумент — режим без меню (совместимость)
+# Если передан аргумент — режим без меню
 if [ -n "$1" ]; then
   case "$1" in
-    --url)   do_url_scan "$2" ;;
-    --asn)   do_asn_lookup "$2" ;;
-    --ip)    do_ip_to_asn "$2" ;;
-    --ping)  do_ping_subnets "$2" ;;
-    http*|ftp*) do_url_scan "$1" ;;  # Обратная совместимость: если передана ссылка
+    --url|-u)        do_vless_scan "$2" ;;
+    --file|-f)       do_vless_scan "$2" ;;
+    --asn|-a)        do_asn_lookup "$2" ;;
+    --ip|-i)         do_ip_to_asn "$2" ;;
+    --ping|-p)       do_ping_subnets "$2" ;;
+    -h|--help)       show_usage ;;
+    http*|ftp*)      do_vless_scan "$1" ;;  # Ссылка на подписку
     *)
-      echo "Использование:"
-      echo "  $0                     — интерактивное меню"
-      echo "  $0 --url <ссылка>      — проверка по ссылке"
-      echo "  $0 --asn <номер>       — подсети по ASN"
-      echo "  $0 --ip <адрес>        — определить ASN по IP"
-      echo "  $0 --ping <файл>       — пинг подсетей из файла"
-      echo "  $0 <ссылка>            — проверка по ссылке (совместимость)"
+      if [ -f "$1" ]; then
+        do_vless_scan "$1"
+      else
+        echo "❌ Неизвестная опция или файл не найден: $1"
+        echo ""
+        show_usage
+        exit 1
+      fi
       ;;
   esac
   exit 0
@@ -753,7 +856,7 @@ while true; do
   read -r CHOICE
 
   case "$CHOICE" in
-    1) do_url_scan ;;
+    1) do_vless_scan ;;
     2) do_asn_lookup ;;
     3) do_ip_to_asn ;;
     4) do_ping_subnets ;;
