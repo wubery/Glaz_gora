@@ -15,16 +15,22 @@ NC='\033[0m'
 # ══════════════════════════════════════════════════════
 # КОНФИГУРАЦИЯ ПО УМОЛЧАНИЮ
 # ══════════════════════════════════════════════════════
-# Ссылка на подписку по умолчанию
-DEFAULT_SUBSCRIPTION_URL="https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt"
+# Список проверенных RU-источников по умолчанию (подписка / репозитории)
+DEFAULT_SOURCES="
+https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt
+https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS.txt
+https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt
+https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt
+https://raw.githubusercontent.com/NiREvil/vless/main/sub/country_proxies/RU.txt
+"
 
 # Подгрузка локального файла конфигурации auto_scan.conf (если существует)
 SCRIPT_DIR=$(dirname "$0" 2>/dev/null || echo ".")
 [ -f "$SCRIPT_DIR/auto_scan.conf" ] && . "$SCRIPT_DIR/auto_scan.conf"
 [ -f "./auto_scan.conf" ] && . "./auto_scan.conf"
 
-# Итоговая ссылка по умолчанию (можно переопределить через переменную VLESS_DEFAULT_URL)
-DEFAULT_URL="${VLESS_DEFAULT_URL:-$DEFAULT_SUBSCRIPTION_URL}"
+# Итоговый список источников (можно переопределить через VLESS_SOURCES)
+SOURCES_LIST="${VLESS_SOURCES:-$DEFAULT_SOURCES}"
 
 # Проверка зависимостей
 check_deps() {
@@ -41,16 +47,15 @@ do_vless_scan() {
 
   if [ -z "$TARGET" ]; then
     echo "📥 Выберите источник VLESS-ключей:"
-    echo "   1) 🌐 Ссылка по умолчанию ($DEFAULT_URL)"
+    echo "   1) 🌐 Все проверенные RU-источники (мульти-загрузка с fallback)"
     echo "   2) 📁 Скачанный файл с ключами (локальный файл)"
-    echo "   3) 🔗 Ввести другую ссылку на подписку (URL)"
-    printf "   👉 Выберите вариант [1-3] (Enter — по умолчанию): "
+    echo "   3) 🔗 Ввести конкретную ссылку на подписку (URL)"
+    printf "   👉 Выберите вариант [1-3] (Enter — все RU-источники): "
     read -r USER_INPUT
 
     case "$USER_INPUT" in
       ""|1)
-        TARGET="$DEFAULT_URL"
-        echo "   ℹ️ Используется ссылка по умолчанию"
+        TARGET="ALL"
         ;;
       2)
         FOUND_FILES=""
@@ -84,15 +89,74 @@ do_vless_scan() {
   trap "rm -rf $TMP_DIR" EXIT
   OUT_CSV="ip_whois_results.csv"
 
-  # Определяем тип: URL или локальный файл
+  # Определяем режим: мульти-загрузка, одиночный URL или локальный файл
+  IS_MULTI=0
   IS_URL=0
   case "$TARGET" in
+    ALL|all|DEFAULT|default)
+      IS_MULTI=1
+      ;;
     http://*|https://*|ftp://*)
       IS_URL=1
       ;;
   esac
 
-  if [ "$IS_URL" -eq 1 ]; then
+  if [ "$IS_MULTI" -eq 1 ]; then
+    # ШАГ 1: Мульти-загрузка источников через VPN
+    echo ""
+    echo "🔐 ШАГ 1: Включите VPN для загрузки ключей"
+    echo "══════════════════════════════════════════════════════"
+    printf "   ✅ VPN включён? Нажмите Enter... "
+    read -r _dummy
+
+    echo "🌐 Загрузка проверенных RU-источников (с fallback):"
+    TOTAL_SOURCES=0
+    for u in $SOURCES_LIST; do
+      [ -z "$u" ] && continue
+      TOTAL_SOURCES=$((TOTAL_SOURCES + 1))
+    done
+
+    IDX=0
+    LOADED_COUNT=0
+    > "$TMP_DIR/raw_keys.txt"
+
+    for url in $SOURCES_LIST; do
+      [ -z "$url" ] && continue
+      IDX=$((IDX + 1))
+      SRC_NAME=$(echo "$url" | sed 's|https://raw.githubusercontent.com/||; s|https://gitlab.com/||')
+      printf "   📥 [%d/%d] %-42s ... " "$IDX" "$TOTAL_SOURCES" "$SRC_NAME"
+
+      if curl -sL --max-time 15 --fail "$url" -o "$TMP_DIR/src_${IDX}.txt" 2>/dev/null; then
+        printf "✅ OK\n"
+        cat "$TMP_DIR/src_${IDX}.txt" >> "$TMP_DIR/raw_keys.txt"
+        echo "" >> "$TMP_DIR/raw_keys.txt"
+        LOADED_COUNT=$((LOADED_COUNT + 1))
+      else
+        # Резервное зеркало для igareck
+        MIRROR=""
+        case "$url" in
+          *githubusercontent.com/igareck/*)
+            MIRROR=$(echo "$url" | sed 's|raw.githubusercontent.com/igareck/vpn-configs-for-russia/main|gitlab.com/igareck/vpn-configs-for-russia/-/raw/main|')
+            ;;
+        esac
+        if [ -n "$MIRROR" ] && curl -sL --max-time 15 --fail "$MIRROR" -o "$TMP_DIR/src_${IDX}.txt" 2>/dev/null; then
+          printf "✅ OK (зеркало GitLab)\n"
+          cat "$TMP_DIR/src_${IDX}.txt" >> "$TMP_DIR/raw_keys.txt"
+          echo "" >> "$TMP_DIR/raw_keys.txt"
+          LOADED_COUNT=$((LOADED_COUNT + 1))
+        else
+          printf "⚠️ Ошибка (пропущен)\n"
+        fi
+      fi
+    done
+
+    echo "   📊 Успешно загружено источников: $LOADED_COUNT из $TOTAL_SOURCES"
+    if [ "$LOADED_COUNT" -eq 0 ]; then
+      echo "❌ Ни один из источников не ответил. Проверьте сеть и VPN."
+      return 1
+    fi
+
+  elif [ "$IS_URL" -eq 1 ]; then
     # ШАГ 1 для URL: Загрузка через VPN
     echo ""
     echo "🔐 ШАГ 1: Включите VPN для загрузки ключей"
@@ -826,20 +890,17 @@ show_usage() {
   echo "Использование:"
   echo "  $0                          — интерактивное меню"
   echo "  $0 <ссылка_или_файл>         — проверка по ссылке или файлу"
-  echo "  $0 --default                — проверка по ссылке по умолчанию (-d)"
-  echo "  $0 --url [ссылка]           — проверка по ссылке (без аргумента — по умолчанию) (-u)"
+  echo "  $0 --all                    — мульти-загрузка всех RU-источников (-d, --default)"
+  echo "  $0 --url [ссылка]           — проверка по ссылке (-u)"
   echo "  $0 --file <путь_к_файлу>    — проверка из скачанного файла с ключами (-f)"
   echo "  $0 --asn <номер>            — подсети по ASN (-a)"
   echo "  $0 --ip <адрес>             — определить ASN по IP (-i)"
   echo "  $0 --ping <файл>            — пинг подсетей из файла (-p)"
   echo "  $0 --help                   — показать справку (-h)"
   echo ""
-  echo "Ссылка по умолчанию:"
-  echo "  $DEFAULT_URL"
-  echo ""
   echo "Примеры:"
-  echo "  $0 --default"
-  echo "  $0 keys.txt"
+  echo "  $0 -d                       # сканировать все RU-источники (igareck, zieng2, NiREvil)"
+  echo "  $0 keys.txt                 # проверить локальный файл"
   echo "  $0 \"https://raw.githubusercontent.com/.../vless.txt\""
 }
 
@@ -851,12 +912,12 @@ check_deps
 # Если передан аргумент — режим без меню
 if [ -n "$1" ]; then
   case "$1" in
-    --default|-d)    do_vless_scan "$DEFAULT_URL" ;;
+    --default|-d|--all) do_vless_scan "ALL" ;;
     --url|-u)
       if [ -n "$2" ]; then
         do_vless_scan "$2"
       else
-        do_vless_scan "$DEFAULT_URL"
+        do_vless_scan "ALL"
       fi
       ;;
     --file|-f)       do_vless_scan "$2" ;;

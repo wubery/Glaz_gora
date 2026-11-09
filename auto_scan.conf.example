@@ -2,5 +2,13 @@
 # Скопируйте этот файл как auto_scan.conf:
 # cp auto_scan.conf.example auto_scan.conf
 
-# Ссылка на подписку по умолчанию:
-DEFAULT_SUBSCRIPTION_URL="https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt"
+# Список проверенных RU-источников для мульти-загрузки (по одной ссылке на строку).
+# Скрипт скачивает все доступные источники и объединяет уникальные ключи.
+# Если один из источников недоступен (404, таймаут, блокировка), он автоматически пропускается (fallback).
+DEFAULT_SOURCES="
+https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt
+https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS.txt
+https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt
+https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt
+https://raw.githubusercontent.com/NiREvil/vless/main/sub/country_proxies/RU.txt
+"
