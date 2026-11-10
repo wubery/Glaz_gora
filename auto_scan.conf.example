@@ -14,3 +14,8 @@ https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_SS+A
 https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-all.txt
 https://raw.githubusercontent.com/NiREvil/vless/main/sub/country_proxies/RU.txt
 "
+
+# Идентификатор устройства (HWID) для сервисов с лимитом устройств (Remnawave, Happ, Incy).
+# Если не указан, определяется автоматически из /etc/machine-id.
+# VLESS_HWID="a1b2c3d4e5f60718293a4b5c6d7e8f90"
+

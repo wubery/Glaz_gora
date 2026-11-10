@@ -94,6 +94,17 @@ do_vless_scan() {
       ;;
   esac
 
+  # Идентификатор устройства (HWID) для совместимости с Remnawave / Happ / Incy
+  HWID_VAL="${VLESS_HWID:-}"
+  if [ -z "$HWID_VAL" ]; then
+    if [ -f "/etc/machine-id" ]; then
+      HWID_VAL=$(cat /etc/machine-id 2>/dev/null | tr -d ' \r\n')
+    elif [ -f "/var/lib/dbus/machine-id" ]; then
+      HWID_VAL=$(cat /var/lib/dbus/machine-id 2>/dev/null | tr -d ' \r\n')
+    fi
+    [ -z "$HWID_VAL" ] && HWID_VAL="a1b2c3d4e5f60718293a4b5c6d7e8f90"
+  fi
+
   TMP_DIR=$(mktemp -d)
   trap "rm -rf $TMP_DIR" EXIT
   OUT_CSV="ip_whois_results.csv"
@@ -140,7 +151,7 @@ do_vless_scan() {
       SRC_NAME=$(echo "$url" | sed 's|https://raw.githubusercontent.com/||; s|https://gitlab.com/||')
       printf "   📥 [%d/%d] %-42s ... " "$IDX" "$TOTAL_SOURCES" "$SRC_NAME"
 
-      if curl -sL --max-time 15 --fail "$url" -o "$TMP_DIR/src_${IDX}.txt" 2>/dev/null; then
+      if curl -sL --max-time 15 -H "User-Agent: Happ/2.5.0" -H "x-hwid: $HWID_VAL" -H "x-device-os: Linux" --fail "$url" -o "$TMP_DIR/src_${IDX}.txt" 2>/dev/null; then
         printf "✅ OK\n"
         cat "$TMP_DIR/src_${IDX}.txt" >> "$TMP_DIR/raw_keys.txt"
         echo "" >> "$TMP_DIR/raw_keys.txt"
@@ -153,7 +164,7 @@ do_vless_scan() {
             MIRROR=$(echo "$url" | sed 's|raw.githubusercontent.com/igareck/vpn-configs-for-russia/main|gitlab.com/igareck/vpn-configs-for-russia/-/raw/main|')
             ;;
         esac
-        if [ -n "$MIRROR" ] && curl -sL --max-time 15 --fail "$MIRROR" -o "$TMP_DIR/src_${IDX}.txt" 2>/dev/null; then
+        if [ -n "$MIRROR" ] && curl -sL --max-time 15 -H "User-Agent: Happ/2.5.0" -H "x-hwid: $HWID_VAL" -H "x-device-os: Linux" --fail "$MIRROR" -o "$TMP_DIR/src_${IDX}.txt" 2>/dev/null; then
           printf "✅ OK (зеркало GitLab)\n"
           cat "$TMP_DIR/src_${IDX}.txt" >> "$TMP_DIR/raw_keys.txt"
           echo "" >> "$TMP_DIR/raw_keys.txt"
@@ -179,7 +190,7 @@ do_vless_scan() {
     read -r _dummy
 
     echo "📥 Загружаю: $TARGET"
-    if ! curl -sL --max-time 15 --fail "$TARGET" -o "$TMP_DIR/raw_keys.txt" 2>/dev/null; then
+    if ! curl -sL --max-time 15 -H "User-Agent: Happ/2.5.0" -H "x-hwid: $HWID_VAL" -H "x-device-os: Linux" --fail "$TARGET" -o "$TMP_DIR/raw_keys.txt" 2>/dev/null; then
       echo "❌ Ошибка загрузки. Проверьте ссылку и подключение."
       return 1
     fi
