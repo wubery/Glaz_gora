@@ -21,6 +21,8 @@ https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt
 https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS.txt
 https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt
 https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt
+https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_SS+All_RUS.txt
+https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-all.txt
 https://raw.githubusercontent.com/NiREvil/vless/main/sub/country_proxies/RU.txt
 "
 
@@ -85,6 +87,13 @@ do_vless_scan() {
   # Удаляем кавычки вокруг пути (если путь был скопирован в кавычках)
   TARGET=$(echo "$TARGET" | sed "s/^['\"]//; s/['\"]$//")
 
+  # Авто-преобразование ссылок GitHub web/blob в прямой raw-файл
+  case "$TARGET" in
+    *github.com/*/blob/*)
+      TARGET=$(echo "$TARGET" | sed 's|https://github.com/|https://raw.githubusercontent.com/|; s|http://github.com/|https://raw.githubusercontent.com/|; s|/blob/|/|')
+      ;;
+  esac
+
   TMP_DIR=$(mktemp -d)
   trap "rm -rf $TMP_DIR" EXIT
   OUT_CSV="ip_whois_results.csv"
@@ -122,6 +131,11 @@ do_vless_scan() {
 
     for url in $SOURCES_LIST; do
       [ -z "$url" ] && continue
+      case "$url" in
+        *github.com/*/blob/*)
+          url=$(echo "$url" | sed 's|https://github.com/|https://raw.githubusercontent.com/|; s|http://github.com/|https://raw.githubusercontent.com/|; s|/blob/|/|')
+          ;;
+      esac
       IDX=$((IDX + 1))
       SRC_NAME=$(echo "$url" | sed 's|https://raw.githubusercontent.com/||; s|https://gitlab.com/||')
       printf "   📥 [%d/%d] %-42s ... " "$IDX" "$TOTAL_SOURCES" "$SRC_NAME"
@@ -186,32 +200,170 @@ do_vless_scan() {
   # Очистка CRLF (переносы строк Windows)
   tr -d '\r' < "$TMP_DIR/raw_keys.txt" > "$TMP_DIR/keys.txt"
 
-  # Проверка на Base64 (стандарт для подписок и файлов V2Ray / Xray / Marzban / Sing-box)
-  HAS_KEYS=$(grep -cE '@[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TMP_DIR/keys.txt" || true)
-  if [ "$HAS_KEYS" -eq 0 ]; then
+  # Проверка на Base64 (стандарт для подписок V2Ray / Xray / Marzban / Sing-box)
+  # Если файл не содержит явных URI протоколов и не начинается с IP, декодируем
+  if ! grep -qE '(vless|vmess|trojan|ss|hysteria2|hy2|tuic)://|^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TMP_DIR/keys.txt"; then
     if command -v base64 >/dev/null 2>&1; then
-      tr -- '-_' '+/' < "$TMP_DIR/keys.txt" | tr -d ' \n\t' | base64 -d > "$TMP_DIR/decoded.txt" 2>/dev/null || true
-      if grep -qE '@[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TMP_DIR/decoded.txt" 2>/dev/null; then
+      # Сначала попытка декодировать весь файл целиком
+      tr -- '-_' '+/' < "$TMP_DIR/keys.txt" | tr -d ' \r\n\t' | base64 -d > "$TMP_DIR/decoded.txt" 2>/dev/null || true
+      if grep -qE '(vless|vmess|trojan|ss|hysteria2|hy2|tuic)://|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TMP_DIR/decoded.txt" 2>/dev/null; then
         echo "   🔓 Обнаружена и успешно декодирована подписка в формате Base64"
-        mv "$TMP_DIR/decoded.txt" "$TMP_DIR/keys.txt"
+        cp "$TMP_DIR/decoded.txt" "$TMP_DIR/keys.txt"
       else
-        rm -f "$TMP_DIR/decoded.txt"
+        # Построчная попытка декодирования (если каждая строка в base64)
+        > "$TMP_DIR/decoded.txt"
+        while IFS= read -r b_line || [ -n "$b_line" ]; do
+          b_line=$(echo "$b_line" | tr -d ' \r\n\t')
+          [ -z "$b_line" ] && continue
+          case "$b_line" in
+            *://*|[0-9]*) echo "$b_line" >> "$TMP_DIR/decoded.txt"; continue ;;
+          esac
+          PAD=$(( (4 - ${#b_line} % 4) % 4 ))
+          [ "$PAD" -eq 1 ] && b_line="${b_line}="
+          [ "$PAD" -eq 2 ] && b_line="${b_line}=="
+          [ "$PAD" -eq 3 ] && b_line="${b_line}==="
+          DEC=$(printf '%s' "$b_line" | tr -- '-_' '+/' | base64 -d 2>/dev/null || true)
+          [ -n "$DEC" ] && echo "$DEC" >> "$TMP_DIR/decoded.txt"
+        done < "$TMP_DIR/keys.txt"
+
+        if grep -qE '(vless|vmess|trojan|ss|hysteria2|hy2|tuic)://|[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TMP_DIR/decoded.txt" 2>/dev/null; then
+          echo "   🔓 Обнаружены и успешно декодированы Base64-ключи"
+          cp "$TMP_DIR/decoded.txt" "$TMP_DIR/keys.txt"
+        fi
       fi
     fi
   fi
 
-  # Извлечение уникальных IP из ссылок (@IP:PORT)
-  grep -oE '@[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TMP_DIR/keys.txt" | cut -d'@' -f2 | sort -u > "$TMP_DIR/all_ips.txt"
-  TOTAL=$(wc -l < "$TMP_DIR/all_ips.txt" | tr -d ' ')
+  # Извлечение серверов и хостов из всех поддерживаемых протоколов:
+  # vless, trojan, ss, hysteria2/hy2, tuic, vmess (json base64), plain IP
+  echo "🔍 Извлечение серверов и хостов из всех протоколов..."
+  > "$TMP_DIR/raw_hosts.txt"
 
-  # Если ключи с @IP не найдены, проверяем строки с чистыми IP адресами
-  if [ "$TOTAL" -eq 0 ]; then
-    grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$TMP_DIR/keys.txt" | sort -u > "$TMP_DIR/all_ips.txt"
-    TOTAL=$(wc -l < "$TMP_DIR/all_ips.txt" | tr -d ' ')
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=$(echo "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    [ -z "$line" ] && continue
+    case "$line" in
+      \#*) continue ;;
+    esac
+
+    # 1. vmess://<base64_json> (хост закодирован в поле "add")
+    case "$line" in
+      vmess://*)
+        B64=$(echo "$line" | sed 's|^vmess://||; s|[?#].*$||' | tr -- '-_' '+/' | tr -d ' \r\n\t')
+        PAD=$(( (4 - ${#B64} % 4) % 4 ))
+        [ "$PAD" -eq 1 ] && B64="${B64}="
+        [ "$PAD" -eq 2 ] && B64="${B64}=="
+        [ "$PAD" -eq 3 ] && B64="${B64}==="
+        JSON=$(printf '%s' "$B64" | base64 -d 2>/dev/null || true)
+        if [ -n "$JSON" ]; then
+          HOST=$(echo "$JSON" | grep -oE '"add"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"add"[[:space:]]*:[[:space:]]*"//; s/"//g')
+          if [ -n "$HOST" ]; then
+            echo "$HOST" >> "$TMP_DIR/raw_hosts.txt"
+            continue
+          fi
+        fi
+        ;;
+    esac
+
+    # 2. ss://base64 (полностью закодированный userinfo@host:port без явного @ в строке)
+    case "$line" in
+      ss://*)
+        if ! echo "$line" | grep -q '@'; then
+          B64=$(echo "$line" | sed 's|^ss://||; s|[?#].*$||' | tr -- '-_' '+/' | tr -d ' \r\n\t')
+          PAD=$(( (4 - ${#B64} % 4) % 4 ))
+          [ "$PAD" -eq 1 ] && B64="${B64}="
+          [ "$PAD" -eq 2 ] && B64="${B64}=="
+          [ "$PAD" -eq 3 ] && B64="${B64}==="
+          DEC=$(printf '%s' "$B64" | base64 -d 2>/dev/null || true)
+          if echo "$DEC" | grep -q '@'; then
+            HOST=$(echo "$DEC" | sed 's/.*@//; s/[?#].*//; s/[[:space:]].*//; s|/.*||; s/:[0-9]*$//')
+            if [ -n "$HOST" ]; then
+              echo "$HOST" >> "$TMP_DIR/raw_hosts.txt"
+              continue
+            fi
+          fi
+        fi
+        ;;
+    esac
+
+    # 3. URI содержащие @HOST[:PORT] (vless, trojan, hysteria2, hy2, tuic, ss)
+    if echo "$line" | grep -q '@'; then
+      HOST=$(echo "$line" | sed 's/.*@//; s/[?#].*//; s/[[:space:]].*//; s|/.*||; s/:[0-9]*$//')
+      if [ -n "$HOST" ]; then
+        echo "$HOST" >> "$TMP_DIR/raw_hosts.txt"
+        continue
+      fi
+    fi
+
+    # 4. Простые строки с IP (например: "103.88.243.11 443" или "103.88.243.11:443" или "103.88.243.11")
+    IP=$(echo "$line" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
+    if [ -n "$IP" ]; then
+      echo "$IP" >> "$TMP_DIR/raw_hosts.txt"
+      continue
+    fi
+  done < "$TMP_DIR/keys.txt"
+
+  # Фильтрация заглушек (0.0.0.0), локальных адресов и не-прокси доменов
+  grep -vE '^(0\.0\.0\.0|127\.|255\.255\.255\.255)' "$TMP_DIR/raw_hosts.txt" | \
+    grep -ivE '^(t\.me|telegram\.org|github\.com|raw\.githubusercontent\.com|gitlab\.com)$' | \
+    sort -u > "$TMP_DIR/clean_hosts.txt"
+
+  # Разделение на прямые IPv4 и доменные имена
+  grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' "$TMP_DIR/clean_hosts.txt" > "$TMP_DIR/numeric_ips.txt"
+  grep -vE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' "$TMP_DIR/clean_hosts.txt" | \
+    grep -E '^[a-zA-Z0-9][-a-zA-Z0-9.]*\.[a-zA-Z]{2,}$' > "$TMP_DIR/valid_domains.txt"
+
+  NUM_COUNT=$(wc -l < "$TMP_DIR/numeric_ips.txt" | tr -d ' ')
+  DOM_COUNT=$(wc -l < "$TMP_DIR/valid_domains.txt" | tr -d ' ')
+  echo "   📦 Обнаружено серверов: $NUM_COUNT по прямому IP, $DOM_COUNT по доменному имени"
+
+  # Разрешение доменных имён в IPv4 через DNS
+  > "$TMP_DIR/resolved_ips.txt"
+  if [ "$DOM_COUNT" -gt 0 ]; then
+    echo "   🔍 Разрешаю доменные имена в IPv4 (DNS-запросы)..."
+    DOM_IDX=0
+    while IFS= read -r dom; do
+      [ -z "$dom" ] && continue
+      DOM_IDX=$((DOM_IDX + 1))
+      printf "\r   ⏳ [%3d/%3d] DNS: %-30s" "$DOM_IDX" "$DOM_COUNT" "$(echo "$dom" | cut -c1-30)"
+
+      RES_IP=""
+      # 1. Попытка через nslookup (стандарт в Busybox / Linux)
+      if command -v nslookup >/dev/null 2>&1; then
+        RES_IP=$(nslookup "$dom" 2>/dev/null | awk '/Name:/ {flag=1} flag && /Address/ {for(i=1;i<=NF;i++) if($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) print $i}' | head -n 1)
+        if [ -z "$RES_IP" ]; then
+          RES_IP=$(nslookup "$dom" 2>/dev/null | grep -E 'Address.*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | tail -n 1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
+        fi
+      fi
+
+      # 2. Попытка через getent (если есть)
+      if [ -z "$RES_IP" ] && command -v getent >/dev/null 2>&1; then
+        RES_IP=$(getent hosts "$dom" 2>/dev/null | awk '{print $1}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
+      fi
+
+      # 3. Fallback через ping (первая строка ping выводит IP адрес в скобках)
+      if [ -z "$RES_IP" ]; then
+        RES_IP=$(ping -c 1 -W 1 "$dom" 2>&1 | head -n 1 | grep -oE '\([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\)' | tr -d '()')
+      fi
+
+      if [ -n "$RES_IP" ]; then
+        echo "$RES_IP" >> "$TMP_DIR/resolved_ips.txt"
+      fi
+    done < "$TMP_DIR/valid_domains.txt"
+    echo ""
+    RESOLVED_COUNT=$(wc -l < "$TMP_DIR/resolved_ips.txt" | tr -d ' ')
+    echo "   ✅ Успешно разрешено в IP: $RESOLVED_COUNT из $DOM_COUNT"
   fi
 
-  echo "   📦 Найдено уникальных IP: $TOTAL"
-  [ "$TOTAL" -eq 0 ] && { echo "❌ IP не найдены в источнике (подписке или файле)."; return 1; }
+  # Объединяем прямые IP и разрешённые домены
+  cat "$TMP_DIR/numeric_ips.txt" "$TMP_DIR/resolved_ips.txt" 2>/dev/null | \
+    grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | \
+    grep -vE '^(0\.0\.0\.0|127\.|255\.255\.255\.255)' | \
+    sort -u > "$TMP_DIR/all_ips.txt"
+
+  TOTAL=$(wc -l < "$TMP_DIR/all_ips.txt" | tr -d ' ')
+  echo "   🎯 Итого уникальных IPv4-серверов для проверки: $TOTAL"
+  [ "$TOTAL" -eq 0 ] && { echo "❌ Серверы не найдены в источнике (подписке или файле)."; return 1; }
 
   # ШАГ 2: Пинг
   echo ""
