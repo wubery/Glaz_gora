@@ -363,7 +363,21 @@ do_vless_scan() {
 
   TOTAL=$(wc -l < "$TMP_DIR/all_ips.txt" | tr -d ' ')
   echo "   🎯 Итого уникальных IPv4-серверов для проверки: $TOTAL"
-  [ "$TOTAL" -eq 0 ] && { echo "❌ Серверы не найдены в источнике (подписке или файле)."; return 1; }
+  if [ "$TOTAL" -eq 0 ]; then
+    echo "❌ Действующие серверы не найдены в источнике."
+    if grep -q '0\.0\.0\.0' "$TMP_DIR/raw_hosts.txt" 2>/dev/null; then
+      echo ""
+      echo "⚠️  Внимание: подписка вернула служебные заглушки (0.0.0.0:1)."
+      echo "   Обычно это означает, что исчерпан лимит устройств (HWID), подписка приостановлена"
+      echo "   или требуется активация/продление в Telegram-боте провайдера."
+      STUB_RAW=$(grep -oE '#.*$' "$TMP_DIR/keys.txt" 2>/dev/null | head -10 | sed 's/^#//' | tr '\n' ' ')
+      if [ -n "$STUB_RAW" ]; then
+        STUB_DEC=$(printf '%s' "$STUB_RAW" | awk 'BEGIN{for(i=0;i<=255;i++)h[sprintf("%02X",i)]=sprintf("%c",i)}{s=$0;while(match(s,/%[0-9a-fA-F]{2}/)){c=toupper(substr(s,RSTART+1,2));s=substr(s,1,RSTART-1) h[c] substr(s,RSTART+3)}gsub(/\+/," ",s);print s}' 2>/dev/null || echo "$STUB_RAW")
+        echo "   📩 Сообщение от провайдера: \"$STUB_DEC\""
+      fi
+    fi
+    return 1
+  fi
 
   # ШАГ 2: Пинг
   echo ""
